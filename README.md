@@ -32,3 +32,7 @@ You need the [gh CLI](https://cli.github.com/), logged in with `gh auth login`.
 - `base` is the branch the PR targets. It defaults to the repo's default branch.
 - `effort` is the review effort passed to `/code-review`: `low`, `medium`, `high` or `xhigh`. The default is `high`.
 - `--draft` opens the PR as a draft.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
