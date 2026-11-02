@@ -33,6 +33,30 @@ You need the [gh CLI](https://cli.github.com/), logged in with `gh auth login`.
 - `effort` is the review effort passed to `/code-review`: `low`, `medium`, `high` or `xhigh`. The default is `high`.
 - `--draft` opens the PR as a draft.
 
+## On the importance of documentation and intent
+
+An agent working on a codebase sees the code but not why it was written that way. Without that context, it "fixes" choices that were made on purpose and works from docs that no longer match the code. The doc review and the decision records exist to give the next agent, or the next reviewer, that context.
+
+The doc review keeps the docs accurate, so an agent reading them gets the current behavior. The decision records keep the intent behind the code where an agent will find it.
+
+### Decision records (ADRs)
+
+Each design decision on the branch becomes an empty commit tagged `[ADR]`, with trailers that say what was chosen, what was rejected and which files it covers:
+
+```
+Use Redis for the session store [ADR]
+
+- Sessions move from the in-process dict to Redis
+
+Decision: Redis for sessions so all instances share state
+Rejected: sticky sessions, they break on autoscale and deploys
+Files: src/session.py, src/config.py
+```
+
+A decision is a choice someone might later question or undo, such as a library, a new dependency, or a limit that looks like a bug. The skill takes the reason from commits, comments or the session. If it can't find one, it asks you. The PR title and body carry the `[ADR]` tag and the trailers, so the record survives a squash merge.
+
+On later runs, the code review looks up the decisions covering the files the branch changed, and skips findings that a decision marks as intended.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
