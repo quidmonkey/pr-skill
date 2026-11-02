@@ -1,6 +1,6 @@
 ---
 name: pr
-version: 2.5.0
+version: 2.5.1
 description: |
   Prepare the current branch for review and open a GitHub pull request, working in a
   separate git worktree so the user's checkout stays free: run /code-review and fix its findings, review and fix the docs, run /security-review and fix its
@@ -106,8 +106,9 @@ Run these and stop on the first failure, with the fix it needs:
 4. The current branch (`git branch --show-current`) is not empty (detached HEAD) and is not `<base>`.
 5. `git rev-list --count origin/<base>..HEAD` is greater than 0.
 6. `git status --porcelain` is empty. If it isn't, show the changed files and say the worktree only sees commits, so these changes won't be reviewed or pushed. Ask whether to commit them first (as the user's own commit, through the hooks), continue without them, or stop. Don't stash or discard them.
-7. Run `gh pr view --json url,state,isDraft,body` to see whether the branch already has a PR. Remember the result for stage 6.
-8. Create the worktree. See "Worktree".
+7. Run `gh pr view --json url,state,isDraft,body` to see whether the branch already has a PR. Remember the result for stage 6. Exit 1 with `no pull requests found` means there is no PR yet. That is not a failure.
+8. If `git rev-parse --verify -q origin/HEAD` fails, run `git remote set-head origin -a`. The `security-review` skill diffs against `origin/HEAD` and fails without it.
+9. Create the worktree. See "Worktree".
 
 ## Worktree
 
@@ -135,7 +136,7 @@ git log -E --all-match --grep='^(Decision|Rejected):' --grep='<paths>' --format=
 git log -E --grep='^(Decision|Rejected):' --format='%h %s%n%b' origin/<base> -- <changed files>
 ```
 
-The first lists the branch's decisions. The other two find decisions already on the base that cover the branch's changed files (`git diff --name-only origin/<base>...HEAD`). The second matches decision records whose `Files:` line names a changed file; `<paths>` is the changed files joined with `|`, with each `.` written as `\.`. It's needed because a decision commit changes no files, so a path filter can't find it. The third finds decisions in commits that changed those files, such as squash merges. Both match lines instead of parsing trailers because a squash merge can push trailers into the middle of a message. Read the union.
+The first lists the branch's decisions. The other two find decisions already on the base that cover the branch's changed files. Run `git diff --name-only origin/<base>...HEAD` on its own first and write its output into the other commands as plain arguments. The worktree session refuses git commands that use `$(...)`. The second matches decision records whose `Files:` line names a changed file; `<paths>` is the changed files joined with `|`, with each `.` written as `\.`. It's needed because a decision commit changes no files, so a path filter can't find it. The third finds decisions in commits that changed those files, such as squash merges. Both match lines instead of parsing trailers because a squash merge can push trailers into the middle of a message. Read the union.
 
 Don't fix a finding that a recorded decision or a doc marks as intentional, unless it causes a concrete bug. If the branch goes against a decision recorded on the base, note it for stage 5.
 
@@ -187,7 +188,7 @@ Check that the repo's docs match the branch as it is now, including the code rev
 
 Up to 2 rounds:
 
-1. Invoke the `security-review` skill with the brief from "Briefing the review skills". It reports only. It doesn't edit code.
+1. Invoke the `security-review` skill with the brief from "Briefing the review skills". It reports only. It doesn't edit code. It always reviews `origin/HEAD...`, the repo's default branch. When `<base>` is a different branch, it can also report changes that are on `<base>` and not on the default branch. The branch didn't make them, so sort them into group 2 or 3 under "Scope".
 2. If it reports no high or medium findings, this stage passes.
 3. Sort the findings (see "Scope"). Fix each group 1 finding at its root cause. If a fix changes documented behavior, update that doc in the same commit, following "Writing". If you're confident a finding is a false positive, don't change code. Record the finding and the reason for the PR body. Ask about group 2 findings.
 4. If nothing changed, this stage passes. Otherwise run "Running checks", then commit:
