@@ -1,9 +1,9 @@
 ---
 name: pr
-version: 2.4.0
+version: 2.5.0
 description: |
-  Prepare the current branch for review and open a GitHub pull request: run /code-review
-  and fix its findings, review and fix the docs, run /security-review and fix its
+  Prepare the current branch for review and open a GitHub pull request, working in a
+  separate git worktree so the user's checkout stays free: run /code-review and fix its findings, review and fix the docs, run /security-review and fix its
   findings, record the branch's design decisions (ADRs) as commit trailers, then push
   and open (or update) the PR with the gh CLI, following the repo's PR template if it
   has one. Stops and reports, without pushing, if a finding can't be fixed. Use when the user says "/pr", "review and PR
@@ -13,7 +13,7 @@ description: |
 
 # /pr
 
-Runs in the current session, on the current branch, in this order:
+Runs in the current session on the current branch. Preflight runs in the user's checkout. The rest runs in a separate git worktree, so the user can keep editing or switch branches while it works. The stages, in order:
 
 1. Preflight
 2. Code review and fix
@@ -22,7 +22,7 @@ Runs in the current session, on the current branch, in this order:
 5. Decision records
 6. Push and open the PR
 
-Each stage must pass before the next starts.
+Each stage must pass before the next starts. "Finish" runs after stage 6 and after any stop.
 
 Invocation: `/pr [base] [effort] [--draft]`
 
@@ -37,6 +37,7 @@ Invocation: `/pr [base] [effort] [--draft]`
 - Commit with plain `git commit` so the installed hooks run on every commit. When a hook fails, read its output and fix the root cause in the code, then commit again (never `--amend`: the rejected commit was never created). If the hook rewrote files (formatters), stage them and commit again. If the same hook still fails after 3 attempts, stop and report.
 - Typing `/pr` authorizes the push and the PR for this branch. Don't ask "shall I proceed?" before them.
 - Never push to, commit on, or rewrite the base branch. Never force-push.
+- Never remove the worktree while it holds commits the user's branch doesn't have. Never pass `--force` to `git worktree remove`.
 - Keep fix commits separate from the user's commits. Never squash, rebase or amend the user's commits.
 - Commit messages: a short summary line, then one bullet per change. No double quotes or backticks anywhere in the message. Write identifiers as plain text and use single quotes when quoting is needed.
 - Fix findings at the root cause, keep each change minimal, and treat tests as the source of truth. Don't change a test just to make it pass.
@@ -79,7 +80,7 @@ Follow each answer. A group 2 finding the user has answered doesn't count as ope
 
 ### Briefing the review skills
 
-When invoking `code-review` or `security-review`, add to the args: the repo path, the base (`origin/<base>`), and "Fix only high and medium severity issues the branch introduced. Report pre-existing issues without fixing them. For each finding, give its severity (high, medium or low) and say whether it's pre-existing. Don't edit docs (README, docs/, CHANGELOG); a later stage handles them." Then revert any doc edit or out-of-scope fix the review made anyway (`git restore` on those hunks only) before sorting the findings.
+When invoking `code-review` or `security-review`, add to the args: the worktree path, the range to review (`origin/<base>...HEAD`), and "Fix only high and medium severity issues the branch introduced. Report pre-existing issues without fixing them. For each finding, give its severity (high, medium or low) and say whether it's pre-existing. Don't edit docs (README, docs/, CHANGELOG); a later stage handles them." Then revert any doc edit or out-of-scope fix the review made anyway (`git restore` on those hunks only) before sorting the findings.
 
 ## Writing
 
@@ -104,8 +105,18 @@ Run these and stop on the first failure, with the fix it needs:
 3. Base: the `base` argument, else `gh repo view --json defaultBranchRef -q .defaultBranchRef.name`. Run `git fetch origin <base>`.
 4. The current branch (`git branch --show-current`) is not empty (detached HEAD) and is not `<base>`.
 5. `git rev-list --count origin/<base>..HEAD` is greater than 0.
-6. `git status --porcelain` is empty. If it isn't, show the changed files and ask whether to commit them first (as the user's own commit, through the hooks) or stop. Don't stash or discard them.
+6. `git status --porcelain` is empty. If it isn't, show the changed files and say the worktree only sees commits, so these changes won't be reviewed or pushed. Ask whether to commit them first (as the user's own commit, through the hooks), continue without them, or stop. Don't stash or discard them.
 7. Run `gh pr view --json url,state,isDraft,body` to see whether the branch already has a PR. Remember the result for stage 6.
+8. Create the worktree. See "Worktree".
+
+## Worktree
+
+Stages 2 to 6 run in a worktree at `<toplevel>/.claude/worktrees/pr-<branch>`, where `<toplevel>` is the output of `git rev-parse --show-toplevel` and `<branch>` is the current branch with each `/` written as `-`.
+
+1. If that path exists, stop and report: an earlier run left it behind, likely holding fix commits. Tell the user to check it and remove it with `git worktree remove <path>`.
+2. If `git check-ignore -q .claude/worktrees/x` fails, append `.claude/worktrees/` to `$(git rev-parse --git-common-dir)/info/exclude`, so the worktree doesn't show up as untracked in the user's checkout. Don't edit `.gitignore`.
+3. `git worktree add --detach <path> <branch>`. The worktree's HEAD is detached at the branch tip, because git won't check out one branch in two worktrees. Commits made there move only the worktree's HEAD until "Finish" brings them to the branch.
+4. Switch the session into it with the EnterWorktree tool, passing `path`. Every later command, review skill and commit runs there. Where a later step says the current branch, it means `<branch>`.
 
 ## Running checks
 
@@ -130,7 +141,7 @@ Don't fix a finding that a recorded decision or a doc marks as intentional, unle
 
 Up to 2 rounds:
 
-1. Invoke the `code-review` skill with args `<effort> --fix <current branch>` plus the brief from "Briefing the review skills".
+1. Invoke the `code-review` skill with args `<effort> --fix` plus the brief from "Briefing the review skills".
 2. If it reports no high or medium findings, this stage passes (after handling any low severity fixes it made, per "Severity").
 3. Sort the findings (see "Scope"). Review what `--fix` changed and undo anything outside group 1. Fix any group 1 finding it left unresolved. Skip any finding that a trailer or doc rules out, and note it for the PR body. Ask about group 2 findings.
 4. If nothing changed, this stage passes. Otherwise run "Running checks", then commit:
@@ -191,7 +202,7 @@ Up to 2 rounds:
 
 If a real high or medium group 1 finding remains after round 2, stop and report.
 
-If this stage changed code, run the `code-review` skill once more with `<effort> --fix <current branch>` and the brief, on the new commits. Handle any findings as in stage 2, within one extra round. Stop and report if they remain.
+If this stage changed code, run the `code-review` skill once more with `<effort> --fix` and the brief, on the new commits. Handle any findings as in stage 2, within one extra round. Stop and report if they remain.
 
 ## 5. Decision records
 
@@ -228,14 +239,14 @@ Record the branch's design decisions in git history, where `git log` finds them 
 
 ## 6. Push and open the PR
 
-1. `git push -u origin HEAD`. This runs the installed `pre-push` hook. If it fails, fix the root cause, commit through the hooks, and push again (up to 3 attempts, then stop and report).
+1. `git push origin HEAD:refs/heads/<branch>`. This runs the installed `pre-push` hook. If it fails, fix the root cause, commit through the hooks, and push again (up to 3 attempts, then stop and report).
 2. Write the title. See "Title".
 3. Write the body to a file in the scratchpad directory. See "Body".
 4. No PR yet: `gh pr create --base <base> --head <current branch> --title '<title>' --body-file <file> [--draft]`.
-   An open PR already: `gh pr edit --title '<title>' --body-file <file>`. Keep any text a person wrote in its existing body; rewrite only the parts this skill wrote. Don't change its draft state or base.
+   An open PR already: `gh pr edit <branch> --title '<title>' --body-file <file>`. Keep any text a person wrote in its existing body; rewrite only the parts this skill wrote. Don't change its draft state or base.
    A closed or merged PR: stop and report. Don't reopen it or create a second one.
 
-Report the PR URL and the commits this run added.
+Run "Finish", then report the PR URL and the commits this run added.
 
 ### Title
 
@@ -275,11 +286,23 @@ If the branch records any decisions, end the body with their `Decision:`, `Rejec
 
 Before creating the PR, reread the title and body against "Writing" and cut anything that doesn't help a reviewer.
 
+## Finish
+
+Bring the worktree's commits to the user's branch and remove the worktree. Run this after stage 6 and after any stop once this run has created the worktree.
+
+1. Note the worktree's HEAD sha (`git rev-parse HEAD`), then leave with the ExitWorktree tool, `action: "keep"`. The session is back in the user's checkout.
+2. If that sha differs from `<branch>`, bring the branch up to it:
+   - If the user's checkout is on `<branch>`, run `git merge --ff-only <sha>`. Git refuses if the user committed to the branch meanwhile or has uncommitted edits to the same files. It leaves their other edits alone.
+   - If the user switched to another branch, run `git branch -f <branch> <sha>`, but only when `git merge-base --is-ancestor <branch> <sha>` passes.
+3. If stage 6 pushed and `<branch>` has no upstream, run `git branch --set-upstream-to=origin/<branch> <branch>`.
+4. If step 2 succeeded or had nothing to do, run `git worktree remove <path>`. If step 2 failed, keep the worktree and report its path, the sha, and what blocks the fast-forward (new commits on the branch, or uncommitted edits that collide). Tell the user to merge or rebase onto that sha, then remove the worktree.
+
 ## Stop and report
 
-When a stage can't pass, don't push and don't create or edit a PR. Leave every commit made so far in place and don't undo anything. Report:
+When a stage can't pass, don't push and don't create or edit a PR. Leave every commit made so far in place and don't undo anything. Run "Finish" if this run created the worktree. Report:
 
 - the stage that stopped (preflight, code review, doc review, security review, decision records, push)
 - each unresolved high or medium group 1 finding or failing hook, with file and line and the output that matters
 - what was fixed and committed before the stop
+- whether "Finish" brought the commits to the branch, or the worktree path it kept
 - what the user needs to do, then that running `/pr` again picks up from the current branch state

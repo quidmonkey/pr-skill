@@ -4,12 +4,14 @@ A Claude Code skill that gets a branch ready for review and opens the pull reque
 
 Running `/pr` on a feature branch goes through six stages in order. Each one has to pass before the next starts:
 
-1. Preflight: checks the git state, gh auth and the base branch.
+1. Preflight: checks the git state, gh auth and the base branch, then creates a worktree for the remaining stages.
 2. Code review: runs `/code-review --fix` and fixes high and medium findings the branch introduced.
 3. Doc review: fixes docs that no longer match the branch.
 4. Security review: runs `/security-review` and fixes high and medium findings.
 5. Decision records: writes the branch's design decisions as empty commits with `Decision:`, `Rejected:` and `Files:` trailers.
 6. Push and PR: pushes the branch and opens or updates the PR, using the repo's PR template if there is one.
+
+Stages 2 to 6 run in a git worktree under `.claude/worktrees/`, so you can keep editing or switch branches while `/pr` works. The worktree only sees commits, so uncommitted changes are left out. When the run ends, the skill fast-forwards your branch to its commits and removes the worktree. If your branch moved in the meantime, it keeps the worktree and tells you which commit to merge.
 
 If a finding can't be fixed, it stops without pushing and reports what's left. Issues that were already on the base branch and touch the branch's code get asked about. Unrelated ones are ignored. Every git hook runs, and the skill never force-pushes.
 
